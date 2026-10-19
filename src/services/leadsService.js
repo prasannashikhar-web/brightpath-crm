@@ -107,6 +107,7 @@ export async function fetchLeads() {
         course_interest,
         source,
         status,
+        lost_reason,
         notes,
         created_at,
         updated_at,
@@ -241,4 +242,232 @@ export async function fetchTeamProfiles() {
     console.error('[leadsService] fetchTeamProfiles exception:', err)
     return []
   }
+}
+
+const VALID_STATUSES = ['New', 'Contacted', 'Qualified', 'Converted', 'Lost']
+
+/**
+ * Fetches a single lead by its unique UUID, joined with assignee and creator profiles.
+ * @param {string} id 
+ * @returns {Promise<any>}
+ */
+export async function fetchLeadById(id) {
+  if (!id) {
+    throw new Error('Lead ID is required.')
+  }
+
+  // Basic UUID validation
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!uuidRegex.test(id)) {
+    const err = new Error('Invalid lead reference ID format.')
+    err.code = 'INVALID_ID'
+    throw err
+  }
+
+  const { data, error } = await supabase
+    .from('leads')
+    .select(`
+      id,
+      full_name,
+      email,
+      phone,
+      course_interest,
+      source,
+      status,
+      lost_reason,
+      notes,
+      created_at,
+      updated_at,
+      assigned_to,
+      created_by,
+      assignee:profiles!leads_assigned_to_fkey (
+        id,
+        full_name,
+        email,
+        role
+      ),
+      creator:profiles!leads_created_by_fkey (
+        id,
+        full_name,
+        email,
+        role
+      )
+    `)
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[leadsService] fetchLeadById database error:', error)
+    throw new Error(error.message || 'Failed to retrieve lead details.')
+  }
+
+  if (!data) {
+    const notFoundErr = new Error('Lead record not found or access denied.')
+    notFoundErr.code = 'NOT_FOUND'
+    throw notFoundErr
+  }
+
+  return data
+}
+
+/**
+ * Updates a lead's status pipeline stage.
+ * Enforces:
+ * - If newStatus is 'Lost', lostReason must be non-empty.
+ * - If moving away from 'Lost' (including reopening as 'Contacted'), lost_reason is cleared to null.
+ * - Both status and lost_reason are persisted together in a single atomic database update.
+ * @param {string} leadId
+ * @param {'New'|'Contacted'|'Qualified'|'Converted'|'Lost'} newStatus
+ * @param {string|null} [lostReason=null]
+ * @returns {Promise<any>}
+ */
+export async function updateLeadStatus(leadId, newStatus, lostReason = null) {
+  if (!leadId) {
+    throw new Error('Lead ID is required.')
+  }
+
+  if (!VALID_STATUSES.includes(newStatus)) {
+    throw new Error(`Invalid status "${newStatus}". Must be one of: ${VALID_STATUSES.join(', ')}`)
+  }
+
+  let finalLostReason = null
+  if (newStatus === 'Lost') {
+    if (!lostReason || !lostReason.trim()) {
+      throw new Error('A valid reason is mandatory when marking a lead as Lost.')
+    }
+    finalLostReason = lostReason.trim()
+  }
+
+  const payload = {
+    status: newStatus,
+    lost_reason: finalLostReason,
+    updated_at: new Date().toISOString()
+  }
+
+  const { data, error } = await supabase
+    .from('leads')
+    .update(payload)
+    .eq('id', leadId)
+    .select(`
+      id,
+      full_name,
+      email,
+      phone,
+      course_interest,
+      source,
+      status,
+      lost_reason,
+      notes,
+      created_at,
+      updated_at,
+      assigned_to,
+      created_by,
+      assignee:profiles!leads_assigned_to_fkey (
+        id,
+        full_name,
+        email,
+        role
+      ),
+      creator:profiles!leads_created_by_fkey (
+        id,
+        full_name,
+        email,
+        role
+      )
+    `)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[leadsService] updateLeadStatus database error:', error)
+    throw new Error(error.message || 'Database error occurred while updating lead status.')
+  }
+
+  if (!data) {
+    throw new Error('Update affected zero rows. You may not have permission to modify this lead.')
+  }
+
+  return data
+}
+
+/**
+ * Updates editable lead information (contact, academic interest, notes, and assignment).
+ * Strictly prevents non-manager/admin roles from reassigning leads.
+ * @param {string} leadId
+ * @param {object} updateData
+ * @param {string} userRole
+ * @returns {Promise<any>}
+ */
+export async function updateLeadDetails(leadId, updateData, userRole = 'counsellor') {
+  if (!leadId) {
+    throw new Error('Lead ID is required.')
+  }
+
+  const { isValid, errors } = validateLeadForm(updateData)
+  if (!isValid) {
+    const firstErr = Object.values(errors)[0]
+    throw new Error(firstErr)
+  }
+
+  const payload = {
+    full_name: updateData.full_name.trim(),
+    phone: normalizePhone(updateData.phone),
+    email: updateData.email?.trim().toLowerCase() || null,
+    course_interest: updateData.course_interest.trim(),
+    source: updateData.source.trim(),
+    notes: updateData.notes?.trim() || null,
+    updated_at: new Date().toISOString()
+  }
+
+  // Only Admin and Manager are authorized to reassign leads
+  if (userRole === 'admin' || userRole === 'manager') {
+    if (updateData.assigned_to !== undefined) {
+      payload.assigned_to = (updateData.assigned_to && updateData.assigned_to !== 'unassigned')
+        ? updateData.assigned_to
+        : null
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('leads')
+    .update(payload)
+    .eq('id', leadId)
+    .select(`
+      id,
+      full_name,
+      email,
+      phone,
+      course_interest,
+      source,
+      status,
+      lost_reason,
+      notes,
+      created_at,
+      updated_at,
+      assigned_to,
+      created_by,
+      assignee:profiles!leads_assigned_to_fkey (
+        id,
+        full_name,
+        email,
+        role
+      ),
+      creator:profiles!leads_created_by_fkey (
+        id,
+        full_name,
+        email,
+        role
+      )
+    `)
+    .maybeSingle()
+
+  if (error) {
+    console.error('[leadsService] updateLeadDetails database error:', error)
+    throw new Error(error.message || 'Failed to update lead details.')
+  }
+
+  if (!data) {
+    throw new Error('Update affected zero rows. You may not have permission to update this lead.')
+  }
+
+  return data
 }

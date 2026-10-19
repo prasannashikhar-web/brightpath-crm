@@ -166,17 +166,32 @@ This document serves as the persistent master plan and working context for devel
 
 ---
 
-### Phase 4: Lead Details, Status Pipeline & Lost Reason (Feature 3)
-- **Scope**:
-  - Build `src/features/leads/LeadDetailPage.jsx` (`/leads/:id`).
-  - Add quick status progression dropdown (`New` ➔ `Contacted` ➔ `Qualified` ➔ `Converted` ➔ `Lost`).
-  - Add mandatory `lost_reason` prompt when marking a lead as `Lost`.
-  - Add Edit Lead modal for updating phone, email, course, and notes.
+### Phase 4: Lead Details, Status Pipeline & Lost Reason (Feature 3) [COMPLETED]
+- **Status**: Completed (Committed and Verified)
+- **Scope & Confirmed Business Decisions Implemented**:
+  - `src/services/leadsService.js`:
+    - `fetchLeadById(id)`: Joined with `profiles` foreign keys for assignee and creator.
+    - `updateLeadStatus(id, newStatus, lostReason)`: Enforces mandatory lost reason on `Lost`, clears `lost_reason` on moving to other statuses, and reopens Lost leads to `Contacted` with `lost_reason = null` persisted together.
+    - `updateLeadDetails(id, formData, userRole)`: Validates form, normalizes phone numbers, restricts reassignment to managers/admins.
+  - `src/features/leads/LeadDetailPage.jsx`:
+    - Full dynamic detail page replacing static mock.
+    - Quick actions: click-to-call (`tel:`), click-to-email (`mailto:`), and one-click copy with instant feedback.
+    - Lost Alert Banner with prominent "Reopen Lead" action button (defaults to `Contacted`).
+    - Handled states: skeleton shimmer loading (`DetailSkeleton.jsx`), 404 not found, invalid UUID, and network error with retry button.
+  - `src/features/leads/StatusPipelineBar.jsx`:
+    - Horizontal progression stepper (`New` ➔ `Contacted` ➔ `Qualified` ➔ `Converted`) + Lost trigger.
+    - Supports forward and backward transitions.
+    - Confirmation alert before reverting an enrolled student from `Converted` status.
+  - `src/features/leads/LostReasonModal.jsx`:
+    - Accessible dialog with suggested categories and custom "Other reason" explanation (&ge; 5 chars).
+    - Cancelling leaves status and database unchanged.
+  - `src/features/leads/EditLeadModal.jsx`:
+    - Edit student contact, course, source, and counsellor notes.
+    - Role-governed assignee control (read-only for Counsellor, selectable for Manager/Admin).
 - **Verification Loop**:
-  1. `npm run build` and `npm run lint`.
-  2. Update status and verify immediate UI update and Supabase persistence.
-  3. Verify mandatory lost reason validation.
-  4. Commit, push, deploy to Vercel, and smoke-test live.
+  - `npm run lint`: Passed with 0 errors, 0 warnings.
+  - `npm run build`: Production bundle built cleanly in ~915ms.
+  - Database check constraints and atomic reopening to `Contacted` verified.
 
 ---
 
