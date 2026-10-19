@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { checkSupabaseConnection } from './lib/supabaseClient'
 import heroImg from './assets/hero.png'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
@@ -6,10 +7,81 @@ import './App.css'
 
 function App() {
   const [count, setCount] = useState(0)
+  const [connectionStatus, setConnectionStatus] = useState({
+    status: 'checking',
+    message: 'Testing connection to Supabase...'
+  })
+
+  useEffect(() => {
+    let isMounted = true
+
+    checkSupabaseConnection().then((res) => {
+      if (!isMounted) return
+      if (res.connected) {
+        console.log('[BrightPath CRM] Supabase Connection: SUCCESS -', res.message)
+        setConnectionStatus({ status: 'connected', message: res.message })
+      } else {
+        console.error('[BrightPath CRM] Supabase Connection: FAILED -', res.message)
+        setConnectionStatus({ status: 'failed', message: res.message })
+      }
+    })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   return (
     <>
       <section id="center">
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '6px 14px',
+            borderRadius: '20px',
+            fontSize: '13px',
+            fontWeight: 500,
+            marginBottom: '16px',
+            backgroundColor:
+              connectionStatus.status === 'connected'
+                ? 'rgba(34, 197, 94, 0.15)'
+                : connectionStatus.status === 'failed'
+                ? 'rgba(239, 68, 68, 0.15)'
+                : 'rgba(234, 179, 8, 0.15)',
+            color:
+              connectionStatus.status === 'connected'
+                ? '#16a34a'
+                : connectionStatus.status === 'failed'
+                ? '#dc2626'
+                : '#ca8a04',
+            border: `1px solid ${
+              connectionStatus.status === 'connected'
+                ? 'rgba(34, 197, 94, 0.3)'
+                : connectionStatus.status === 'failed'
+                ? 'rgba(239, 68, 68, 0.3)'
+                : 'rgba(234, 179, 8, 0.3)'
+            }`
+          }}
+        >
+          <span
+            style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor:
+                connectionStatus.status === 'connected'
+                  ? '#16a34a'
+                  : connectionStatus.status === 'failed'
+                  ? '#dc2626'
+                  : '#ca8a04'
+            }}
+          />
+          {connectionStatus.status === 'connected' && 'Supabase Connected'}
+          {connectionStatus.status === 'failed' && `Supabase Connection Failed: ${connectionStatus.message}`}
+          {connectionStatus.status === 'checking' && 'Checking Supabase Connection...'}
+        </div>
         <div className="hero">
           <img src={heroImg} className="base" width="170" height="179" alt="" />
           <img src={reactLogo} className="framework" alt="React logo" />
