@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
+import { NavLink, Outlet, useLocation, useNavigate, Link } from 'react-router-dom'
 import {
   LayoutDashboard,
   Users,
@@ -9,21 +9,29 @@ import {
   X,
   GraduationCap,
   LogIn,
+  LogOut,
   CheckCircle2,
   AlertCircle,
-  Loader2
+  Loader2,
+  ChevronDown
 } from 'lucide-react'
 import { checkSupabaseConnection } from '../../lib/supabaseClient'
+import { useAuth } from '../../context/useAuth'
 
 export default function AppLayout() {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState({
     status: 'checking',
     message: 'Testing Supabase connection...'
   })
-  const location = useLocation()
 
-  // Run Supabase health check on mount to preserve existing Phase 1 connectivity verification
+  const { user, profile, role, signOut, isAuthenticated } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const dropdownRef = useRef(null)
+
+  // Test Supabase connection on mount
   useEffect(() => {
     let isMounted = true
 
@@ -41,7 +49,29 @@ export default function AppLayout() {
     }
   }, [])
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setUserDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [])
+
   const closeDrawer = () => setMobileDrawerOpen(false)
+
+  const handleSignOut = async () => {
+    try {
+      setUserDropdownOpen(false)
+      closeDrawer()
+      await signOut()
+      navigate('/login', { replace: true })
+    } catch (err) {
+      console.error('Sign out error:', err)
+    }
+  }
 
   const getPageTitle = () => {
     const path = location.pathname
@@ -50,9 +80,21 @@ export default function AppLayout() {
     if (path === '/leads') return 'Leads Pipeline'
     if (path === '/follow-ups') return 'Follow-Up Management'
     if (path === '/reports') return 'Reports & Analytics'
-    if (path === '/login') return 'Authentication'
+    if (path === '/login') return 'Staff Authentication'
     return 'BrightPath CRM'
   }
+
+  // Derive initials from full name or email
+  const getInitials = () => {
+    const name = profile?.full_name || user?.user_metadata?.full_name || user?.email || 'Staff'
+    const parts = name.trim().split(/\s+/)
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase()
+    }
+    return name.substring(0, 2).toUpperCase()
+  }
+
+  const displayName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Staff Member'
 
   const navItems = [
     { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
@@ -81,17 +123,21 @@ export default function AppLayout() {
         )
       })}
 
-      <div className="nav-section-label" style={{ marginTop: '16px' }}>Account & Auth</div>
-      <NavLink
-        to="/login"
-        onClick={onSelect}
-        className={({ isActive }) =>
-          `nav-link-item ${isActive ? 'active' : ''}`
-        }
-      >
-        <LogIn className="nav-link-icon" />
-        <span>Sign In / Register</span>
-      </NavLink>
+      {!isAuthenticated && (
+        <>
+          <div className="nav-section-label" style={{ marginTop: '16px' }}>Account & Auth</div>
+          <NavLink
+            to="/login"
+            onClick={onSelect}
+            className={({ isActive }) =>
+              `nav-link-item ${isActive ? 'active' : ''}`
+            }
+          >
+            <LogIn className="nav-link-icon" />
+            <span>Sign In / Register</span>
+          </NavLink>
+        </>
+      )}
     </>
   )
 
@@ -112,6 +158,35 @@ export default function AppLayout() {
         <nav className="sidebar-nav">
           {renderNavLinks()}
         </nav>
+
+        {/* Authenticated User in Sidebar Footer */}
+        {isAuthenticated && (
+          <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                <div className="user-avatar-sm" style={{ backgroundColor: 'var(--color-accent-blue)', flexShrink: 0 }}>
+                  {getInitials()}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#ffffff', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                    {displayName}
+                  </span>
+                  <span className={`role-badge role-badge-${role}`} style={{ width: 'fit-content', marginTop: '2px' }}>
+                    {role}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                title="Sign out"
+                style={{ color: '#94a3b8', padding: '6px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="sidebar-footer">
           <div className={`status-pill ${connectionStatus.status}`}>
@@ -160,6 +235,31 @@ export default function AppLayout() {
               {renderNavLinks(closeDrawer)}
             </nav>
 
+            {isAuthenticated && (
+              <div style={{ padding: '16px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div className="user-avatar-sm" style={{ backgroundColor: 'var(--color-accent-blue)' }}>
+                      {getInitials()}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#ffffff' }}>{displayName}</div>
+                      <span className={`role-badge role-badge-${role}`}>{role}</span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="btn btn-secondary"
+                  style={{ width: '100%', fontSize: '12px', padding: '6px 12px', justifyContent: 'center', gap: '6px' }}
+                >
+                  <LogOut size={14} />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            )}
+
             <div className="sidebar-footer">
               <div className={`status-pill ${connectionStatus.status}`}>
                 <span className="status-dot" />
@@ -205,11 +305,55 @@ export default function AppLayout() {
               </span>
             </div>
 
-            {/* User pill placeholder (ready for Phase 2 Auth) */}
-            <div className="user-pill" title="Authentication lifecycle ready for Phase 2">
-              <div className="user-avatar-sm">BP</div>
-              <span>Staff Portal</span>
-            </div>
+            {/* Authenticated User Pill with Dropdown */}
+            {isAuthenticated ? (
+              <div className="user-dropdown-container" ref={dropdownRef}>
+                <button
+                  type="button"
+                  className="user-pill-btn"
+                  onClick={() => setUserDropdownOpen(!userDropdownOpen)}
+                  aria-expanded={userDropdownOpen}
+                  aria-haspopup="true"
+                >
+                  <div className="user-avatar-sm">
+                    {getInitials()}
+                  </div>
+                  <span className="user-pill-name">{displayName}</span>
+                  <span className={`role-badge role-badge-${role}`}>{role}</span>
+                  <ChevronDown size={14} color="var(--text-muted)" />
+                </button>
+
+                {/* Dropdown Menu */}
+                {userDropdownOpen && (
+                  <div className="user-dropdown-menu" role="menu">
+                    <div className="dropdown-user-header">
+                      <div className="dropdown-user-name">{displayName}</div>
+                      <div className="dropdown-user-email">{user?.email}</div>
+                      <div style={{ marginTop: '6px' }}>
+                        <span className={`role-badge role-badge-${role}`}>{role}</span>
+                      </div>
+                    </div>
+
+                    <div className="dropdown-divider" />
+
+                    <button
+                      type="button"
+                      className="dropdown-item danger"
+                      onClick={handleSignOut}
+                      role="menuitem"
+                    >
+                      <LogOut size={16} />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Link to="/login" className="btn btn-primary" style={{ padding: '6px 14px', fontSize: '13px' }}>
+                <LogIn size={15} />
+                <span>Staff Sign In</span>
+              </Link>
+            )}
           </div>
         </header>
 

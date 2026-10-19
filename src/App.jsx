@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { AuthProvider } from './context/AuthContext'
 import AppLayout from './components/layout/AppLayout'
+import ProtectedRoute from './components/common/ProtectedRoute'
 import DashboardPage from './features/dashboard/DashboardPage'
 import LeadsListPage from './features/leads/LeadsListPage'
 import LeadDetailPage from './features/leads/LeadDetailPage'
@@ -11,20 +13,29 @@ import './App.css'
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<AppLayout />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="leads" element={<LeadsListPage />} />
-          <Route path="leads/:id" element={<LeadDetailPage />} />
-          <Route path="follow-ups" element={<FollowUpsPage />} />
-          <Route path="reports" element={<ReportsPage />} />
-          <Route path="login" element={<LoginPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<AppLayout />}>
+            {/* Public Authentication Route */}
+            <Route path="login" element={<LoginPage />} />
+
+            {/* Protected Routes (Secured by Supabase Auth Session) */}
+            <Route element={<ProtectedRoute />}>
+              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="leads" element={<LeadsListPage />} />
+              <Route path="leads/:id" element={<LeadDetailPage />} />
+              <Route path="follow-ups" element={<FollowUpsPage />} />
+              <Route path="reports" element={<ReportsPage />} />
+            </Route>
+
+            {/* 404 Fallback */}
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   )
 }
 
