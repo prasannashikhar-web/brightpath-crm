@@ -19,7 +19,9 @@ import { checkSupabaseConnection } from '../../lib/supabaseClient'
 import { useAuth } from '../../context/useAuth'
 
 export default function AppLayout() {
+  const location = useLocation()
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+  const [prevPathname, setPrevPathname] = useState(location.pathname)
   const [userDropdownOpen, setUserDropdownOpen] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState({
     status: 'checking',
@@ -27,7 +29,6 @@ export default function AppLayout() {
   })
 
   const { user, profile, role, signOut, isAuthenticated } = useAuth()
-  const location = useLocation()
   const navigate = useNavigate()
   const dropdownRef = useRef(null)
 
@@ -59,6 +60,39 @@ export default function AppLayout() {
     document.addEventListener('mousedown', handleOutsideClick)
     return () => document.removeEventListener('mousedown', handleOutsideClick)
   }, [])
+
+  // Close mobile drawer on route change (in-render state adjustment per React guidelines)
+  if (prevPathname !== location.pathname) {
+    setPrevPathname(location.pathname)
+    if (mobileDrawerOpen) {
+      setMobileDrawerOpen(false)
+    }
+  }
+
+  // Close mobile drawer and dropdown on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setMobileDrawerOpen(false)
+        setUserDropdownOpen(false)
+      }
+    }
+    if (mobileDrawerOpen || userDropdownOpen) {
+      window.addEventListener('keydown', handleKeyDown)
+      return () => window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [mobileDrawerOpen, userDropdownOpen])
+
+  // Prevent background scroll when mobile drawer is open
+  useEffect(() => {
+    if (mobileDrawerOpen) {
+      const originalOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = originalOverflow
+      }
+    }
+  }, [mobileDrawerOpen])
 
   const closeDrawer = () => setMobileDrawerOpen(false)
 
@@ -151,7 +185,7 @@ export default function AppLayout() {
           </div>
           <div className="brand-info">
             <span className="brand-title">BrightPath CRM</span>
-            <span className="brand-subtitle">Coaching Management</span>
+            <span className="brand-subtitle">Coaching & Client Management</span>
           </div>
         </div>
 
@@ -180,6 +214,7 @@ export default function AppLayout() {
                 type="button"
                 onClick={handleSignOut}
                 title="Sign out"
+                aria-label="Sign out"
                 style={{ color: '#94a3b8', padding: '6px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
               >
                 <LogOut size={16} />
@@ -205,7 +240,7 @@ export default function AppLayout() {
         <div
           className="mobile-drawer-overlay"
           onClick={() => setMobileDrawerOpen(false)}
-          aria-hidden="true"
+          role="presentation"
         >
           <div
             className="mobile-drawer"
@@ -283,6 +318,7 @@ export default function AppLayout() {
               className="mobile-menu-btn"
               onClick={() => setMobileDrawerOpen(true)}
               aria-label="Open navigation menu"
+              aria-expanded={mobileDrawerOpen}
             >
               <Menu size={20} />
             </button>

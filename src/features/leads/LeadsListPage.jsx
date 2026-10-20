@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Plus,
-  Search,
   Users,
   ArrowUpRight,
   RefreshCw,
@@ -11,11 +10,11 @@ import {
   Copy,
   Check,
   CheckCircle2,
-  SlidersHorizontal,
   FolderOpen
 } from 'lucide-react'
 import { fetchLeads, fetchTeamProfiles } from '../../services/leadsService'
 import LeadFormModal from './LeadFormModal'
+import LeadFilterBar from './LeadFilterBar'
 import LeadCard from './LeadCard'
 import TableSkeleton from '../../components/common/TableSkeleton'
 
@@ -47,6 +46,8 @@ export default function LeadsListPage() {
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
+  const [sourceFilter, setSourceFilter] = useState('All')
+  const [assigneeFilter, setAssigneeFilter] = useState('All')
   const [sortBy, setSortBy] = useState('newest')
 
   // Modals & Feedback
@@ -117,26 +118,100 @@ export default function LeadsListPage() {
     }, 4500)
   }
 
-  // Filter and Sort computation
+  // Predefined and dynamically discovered lead sources
+  const availableSources = useMemo(() => {
+    const standard = [
+      'Website Enquiry',
+      'Walk-in / Campus Visit',
+      'Google Search / Ad',
+      'Meta / Instagram Ad',
+      'Student / Parent Referral',
+      'School Outreach Seminar',
+      'Education Fair / Expo',
+      'Direct Phone Call'
+    ]
+    const custom = leads.map((l) => l.source).filter(Boolean)
+    return Array.from(new Set([...standard, ...custom]))
+  }, [leads])
+
+  // Status Tab Counts (Pipeline Volume across institute dataset)
+  const statusCounts = useMemo(() => {
+    const counts = { All: leads.length, New: 0, Contacted: 0, Qualified: 0, Converted: 0, Lost: 0 }
+    for (const lead of leads) {
+      if (counts[lead.status] !== undefined) {
+        counts[lead.status] += 1
+      }
+    }
+    return counts
+  }, [leads])
+
+  // Active filter checks
+  const isFilterActive = useMemo(() => {
+    return (
+      searchQuery.trim() !== '' ||
+      statusFilter !== 'All' ||
+      sourceFilter !== 'All' ||
+      assigneeFilter !== 'All'
+    )
+  }, [searchQuery, statusFilter, sourceFilter, assigneeFilter])
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0
+    if (searchQuery.trim() !== '') count++
+    if (statusFilter !== 'All') count++
+    if (sourceFilter !== 'All') count++
+    if (assigneeFilter !== 'All') count++
+    return count
+  }, [searchQuery, statusFilter, sourceFilter, assigneeFilter])
+
+  // Reset Filters (Preserves user's chosen sort order)
+  const handleResetFilters = useCallback(() => {
+    setSearchQuery('')
+    setStatusFilter('All')
+    setSourceFilter('All')
+    setAssigneeFilter('All')
+  }, [])
+
+  // Filter and Sort computation (AND logic across all 4 dimensions)
   const filteredAndSortedLeads = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const rawDigits = q.replace(/\D/g, '')
+
     return leads
       .filter((lead) => {
-        // Status filter
+        // 1. Status filter
         if (statusFilter !== 'All' && lead.status !== statusFilter) {
           return false
         }
 
-        // Search text matching
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase().trim()
+        // 2. Source filter
+        if (sourceFilter !== 'All' && lead.source !== sourceFilter) {
+          return false
+        }
+
+        // 3. Assignee filter
+        if (assigneeFilter !== 'All') {
+          if (assigneeFilter === 'unassigned') {
+            if (lead.assigned_to) return false
+          } else if (lead.assigned_to !== assigneeFilter) {
+            return false
+          }
+        }
+
+        // 4. Omni-Search matching: Name, Phone, Email, Course
+        if (q) {
           const matchName = lead.full_name?.toLowerCase().includes(q)
-          const matchPhone = lead.phone?.toLowerCase().includes(q)
           const matchEmail = lead.email?.toLowerCase().includes(q)
           const matchCourse = lead.course_interest?.toLowerCase().includes(q)
-          const matchSource = lead.source?.toLowerCase().includes(q)
-          const matchAssignee = lead.assignee?.full_name?.toLowerCase().includes(q)
 
-          return matchName || matchPhone || matchEmail || matchCourse || matchSource || matchAssignee
+          // Intelligent phone matching: matches formatted phone OR stripped digits
+          const matchPhoneFormatted = lead.phone?.toLowerCase().includes(q)
+          const phoneDigits = (lead.phone || '').replace(/\D/g, '')
+          const matchPhoneDigits = rawDigits.length >= 3 && phoneDigits.includes(rawDigits)
+
+          if (!matchName && !matchEmail && !matchCourse && !matchPhoneFormatted && !matchPhoneDigits) {
+            return false
+          }
         }
 
         return true
@@ -149,14 +224,14 @@ export default function LeadsListPage() {
           return new Date(a.created_at) - new Date(b.created_at)
         }
         if (sortBy === 'name-asc') {
-          return a.full_name.localeCompare(b.full_name)
+          return (a.full_name || '').localeCompare(b.full_name || '')
         }
         if (sortBy === 'name-desc') {
-          return b.full_name.localeCompare(a.full_name)
+          return (b.full_name || '').localeCompare(a.full_name || '')
         }
         return 0
       })
-  }, [leads, statusFilter, searchQuery, sortBy])
+  }, [leads, statusFilter, sourceFilter, assigneeFilter, searchQuery, sortBy])
 
   // Status badge style helper
   const getBadgeClass = (status) => {
@@ -170,8 +245,6 @@ export default function LeadsListPage() {
     return map[status] || 'badge-new'
   }
 
-  const STATUS_TABS = ['All', 'New', 'Contacted', 'Qualified', 'Converted', 'Lost']
-
   return (
     <div className="leads-page-container">
       {/* Top Header */}
@@ -180,7 +253,9 @@ export default function LeadsListPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <h1>Leads Pipeline</h1>
             <span className="pipeline-count-pill">
-              {leads.length} Total
+              {isFilterActive
+                ? `Showing ${filteredAndSortedLeads.length} of ${leads.length}`
+                : `${leads.length} Total`}
             </span>
           </div>
           <p>Real-time coaching admissions pipeline, student contacts, and counsellor follow-up tracking.</p>
@@ -243,72 +318,25 @@ export default function LeadsListPage() {
         </div>
       )}
 
-      {/* Search, Status Tabs, and Sorting Controls */}
-      <div className="card pipeline-filter-card">
-        <div className="pipeline-controls-grid">
-          {/* Search Box */}
-          <div className="pipeline-search-box">
-            <Search size={16} className="search-icon" />
-            <input
-              type="text"
-              placeholder="Search by student name, phone, email, course..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pipeline-search-input"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                className="search-clear-btn"
-                onClick={() => setSearchQuery('')}
-                aria-label="Clear search"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-
-          {/* Sort Selector */}
-          <div className="pipeline-sort-box">
-            <SlidersHorizontal size={14} color="var(--text-muted)" />
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)' }}>Sort:</span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="pipeline-sort-select"
-            >
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
-              <option value="name-asc">Student Name (A–Z)</option>
-              <option value="name-desc">Student Name (Z–A)</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Status Filter Pills */}
-        <div className="pipeline-status-tabs" role="tablist">
-          {STATUS_TABS.map((status) => {
-            const isActive = statusFilter === status
-            const count = status === 'All'
-              ? leads.length
-              : leads.filter((l) => l.status === status).length
-
-            return (
-              <button
-                key={status}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                className={`status-tab-btn ${isActive ? 'active' : ''}`}
-                onClick={() => setStatusFilter(status)}
-              >
-                <span>{status}</span>
-                <span className="status-tab-count">{count}</span>
-              </button>
-            )
-          })}
-        </div>
-      </div>
+      {/* Search, Multi-Filter, and Sorting Controls */}
+      <LeadFilterBar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        statusFilter={statusFilter}
+        onStatusChange={setStatusFilter}
+        statusCounts={statusCounts}
+        sourceFilter={sourceFilter}
+        onSourceChange={setSourceFilter}
+        availableSources={availableSources}
+        assigneeFilter={assigneeFilter}
+        onAssigneeChange={setAssigneeFilter}
+        teamMembers={teamMembers}
+        sortBy={sortBy}
+        onSortChange={setSortBy}
+        onResetFilters={handleResetFilters}
+        isFilterActive={isFilterActive}
+        activeFilterCount={activeFilterCount}
+      />
 
       {/* Main Content Area: Responsive Table (Desktop/Tablet) + Cards (Mobile) */}
       <div className="card pipeline-table-card">
@@ -452,10 +480,7 @@ export default function LeadsListPage() {
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => {
-                setSearchQuery('')
-                setStatusFilter('All')
-              }}
+              onClick={handleResetFilters}
             >
               Reset Search & Filters
             </button>

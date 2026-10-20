@@ -20,18 +20,27 @@ import {
   ExternalLink,
   ShieldAlert,
   FileQuestion,
-  UserCheck
+  UserCheck,
+  Plus
 } from 'lucide-react'
 import {
   fetchLeadById,
   updateLeadStatus,
   updateLeadDetails
 } from '../../services/leadsService.js'
+import {
+  fetchFollowUpsByLead,
+  completeFollowUp
+} from '../../services/followUpsService.js'
 import { useAuth } from '../../context/useAuth.js'
 import DetailSkeleton from '../../components/common/DetailSkeleton.jsx'
 import StatusPipelineBar from './StatusPipelineBar.jsx'
 import LostReasonModal from './LostReasonModal.jsx'
 import EditLeadModal from './EditLeadModal.jsx'
+import ScheduleFollowUpModal from '../followups/ScheduleFollowUpModal.jsx'
+import FollowUpCard from '../followups/FollowUpCard.jsx'
+import ActivityTimeline from './ActivityTimeline.jsx'
+import { fetchActivitiesByLead } from '../../services/activitiesService.js'
 
 // Helper to format full date-time strings
 function formatDateTime(isoString) {
@@ -58,14 +67,21 @@ export default function LeadDetailPage() {
   const userRole = profile?.role || 'counsellor'
 
   const [lead, setLead] = useState(null)
+  const [followUps, setFollowUps] = useState([])
+  const [activities, setActivities] = useState([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingActivities, setIsLoadingActivities] = useState(true)
   const [errorState, setErrorState] = useState(null) // { type: 'NOT_FOUND' | 'NETWORK', message: string }
+  const [activityError, setActivityError] = useState(null)
+  const [activeTab, setActiveTab] = useState('followups') // 'followups' | 'activities'
 
   // Action states
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
   const [isSavingEdit, setIsSavingEdit] = useState(false)
   const [isLostModalOpen, setIsLostModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [isFollowUpModalOpen, setIsFollowUpModalOpen] = useState(false)
+  const [completingFollowUpId, setCompletingFollowUpId] = useState(null)
 
   // Feedback notifications
   const [feedback, setFeedback] = useState(null) // { type: 'success' | 'error', message: string }
@@ -74,18 +90,42 @@ export default function LeadDetailPage() {
   // Pre-flight derived UUID check
   const isInvalidFormat = !id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 
-  // Fetch lead data asynchronously in effect
+  // Reload activities independently after actions (status change, follow-up, etc.)
+  const reloadActivities = async () => {
+    if (!id || isInvalidFormat) return
+    setIsLoadingActivities(true)
+    try {
+      const data = await fetchActivitiesByLead(id)
+      setActivities(data)
+      setActivityError(null)
+    } catch (err) {
+      console.error('[LeadDetailPage] Failed to reload activities:', err)
+      setActivityError(err.message || 'Failed to refresh activity timeline.')
+    } finally {
+      setIsLoadingActivities(false)
+    }
+  }
+
+  // Fetch lead, follow-ups, and activity audit trail asynchronously in effect
   useEffect(() => {
-    if (isInvalidFormat) return
+    if (isInvalidFormat || !id) return
 
     let isMounted = true
 
-    fetchLeadById(id)
-      .then((data) => {
+    Promise.all([
+      fetchLeadById(id),
+      fetchFollowUpsByLead(id),
+      fetchActivitiesByLead(id)
+    ])
+      .then(([leadData, followUpsData, activitiesData]) => {
         if (!isMounted) return
-        setLead(data)
+        setLead(leadData)
+        setFollowUps(followUpsData)
+        setActivities(activitiesData)
         setErrorState(null)
+        setActivityError(null)
         setIsLoading(false)
+        setIsLoadingActivities(false)
       })
       .catch((err) => {
         if (!isMounted) return
@@ -101,6 +141,7 @@ export default function LeadDetailPage() {
           })
         }
         setIsLoading(false)
+        setIsLoadingActivities(false)
       })
 
     return () => { isMounted = false }
@@ -108,11 +149,20 @@ export default function LeadDetailPage() {
 
   const handleManualRetry = () => {
     setIsLoading(true)
+    setIsLoadingActivities(true)
     setErrorState(null)
-    fetchLeadById(id)
-      .then((data) => {
-        setLead(data)
+    setActivityError(null)
+    Promise.all([
+      fetchLeadById(id),
+      fetchFollowUpsByLead(id),
+      fetchActivitiesByLead(id)
+    ])
+      .then(([leadData, followUpsData, activitiesData]) => {
+        setLead(leadData)
+        setFollowUps(followUpsData)
+        setActivities(activitiesData)
         setErrorState(null)
+        setActivityError(null)
       })
       .catch((err) => {
         if (err.code === 'NOT_FOUND' || err.message?.includes('not found') || err.message?.includes('denied')) {
@@ -129,6 +179,7 @@ export default function LeadDetailPage() {
       })
       .finally(() => {
         setIsLoading(false)
+        setIsLoadingActivities(false)
       })
   }
 
@@ -159,12 +210,13 @@ export default function LeadDetailPage() {
     setFeedback(null)
 
     try {
-      const updated = await updateLeadStatus(lead.id, targetStage, null)
+      const updated = await updateLeadStatus(lead.id, targetStage, null, lead.status, profile?.id)
       setLead(updated)
       setFeedback({
         type: 'success',
         message: `Lead status successfully updated to "${targetStage}".`
       })
+      reloadActivities()
     } catch (err) {
       console.error('[LeadDetailPage] handleStageClick error:', err)
       setFeedback({
@@ -184,13 +236,14 @@ export default function LeadDetailPage() {
     setFeedback(null)
 
     try {
-      const updated = await updateLeadStatus(lead.id, 'Lost', reason)
+      const updated = await updateLeadStatus(lead.id, 'Lost', reason, lead.status, profile?.id)
       setLead(updated)
       setIsLostModalOpen(false)
       setFeedback({
         type: 'success',
         message: 'Lead has been marked as Lost.'
       })
+      reloadActivities()
     } catch (err) {
       console.error('[LeadDetailPage] handleConfirmLost error:', err)
       setFeedback({
@@ -212,12 +265,13 @@ export default function LeadDetailPage() {
 
     try {
       // Explicitly sets status to Contacted and clears lost_reason
-      const updated = await updateLeadStatus(lead.id, 'Contacted', null)
+      const updated = await updateLeadStatus(lead.id, 'Contacted', null, lead.status, profile?.id)
       setLead(updated)
       setFeedback({
         type: 'success',
         message: 'Lead reopened successfully and moved to "Contacted" status.'
       })
+      reloadActivities()
     } catch (err) {
       console.error('[LeadDetailPage] handleReopenLead error:', err)
       setFeedback({
@@ -235,15 +289,46 @@ export default function LeadDetailPage() {
 
     setIsSavingEdit(true)
     try {
-      const updated = await updateLeadDetails(lead.id, formValues, userRole)
+      const updated = await updateLeadDetails(lead.id, formValues, userRole, profile?.id)
       setLead(updated)
       setIsEditModalOpen(false)
       setFeedback({
         type: 'success',
         message: 'Lead information updated successfully.'
       })
+      reloadActivities()
     } finally {
       setIsSavingEdit(false)
+    }
+  }
+
+  const handleFollowUpCreated = (newFollowUp) => {
+    setFollowUps((prev) => [newFollowUp, ...prev])
+    setFeedback({
+      type: 'success',
+      message: 'Follow-up scheduled successfully.'
+    })
+    reloadActivities()
+  }
+
+  const handleCompleteFollowUp = async (followUpId, outcomeNote) => {
+    setCompletingFollowUpId(followUpId)
+    try {
+      const updated = await completeFollowUp(followUpId, outcomeNote, profile?.id)
+      setFollowUps((prev) => prev.map((item) => (item.id === followUpId ? updated : item)))
+      setFeedback({
+        type: 'success',
+        message: 'Follow-up marked as completed.'
+      })
+      reloadActivities()
+    } catch (err) {
+      console.error('Failed to complete follow up:', err)
+      setFeedback({
+        type: 'error',
+        message: err.message || 'Failed to complete follow-up.'
+      })
+    } finally {
+      setCompletingFollowUpId(null)
     }
   }
 
@@ -466,8 +551,8 @@ export default function LeadDetailPage() {
           <button
             type="button"
             className="btn btn-primary"
-            title="Follow-up scheduling will be fully enabled in Phase 6"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', opacity: 0.85 }}
+            onClick={() => setIsFollowUpModalOpen(true)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
           >
             <Calendar size={15} />
             <span>Schedule Follow-up</span>
@@ -691,26 +776,80 @@ export default function LeadDetailPage() {
         )}
       </div>
 
-      {/* Future Phases Tab Shell: Follow-ups & Activity History */}
+      {/* Follow-ups & Activity History Tabs */}
       <div className="card" style={{ marginTop: '20px' }}>
-        <div style={{ display: 'flex', gap: '20px', borderBottom: '1px solid var(--border-default)', padding: '0 24px', paddingTop: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: 'var(--color-accent-blue)', borderBottom: '2px solid var(--color-accent-blue)', paddingBottom: '12px' }}>
+        <div className="detail-tabs-header">
+          <button
+            type="button"
+            className={`detail-tab-btn ${activeTab === 'followups' ? 'active' : ''}`}
+            onClick={() => setActiveTab('followups')}
+          >
             <Clock size={16} />
-            <span>Follow-ups (Phase 6)</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)', paddingBottom: '12px', cursor: 'not-allowed' }}>
+            <span>Follow-ups ({followUps.length})</span>
+          </button>
+          <button
+            type="button"
+            className={`detail-tab-btn ${activeTab === 'activities' ? 'active' : ''}`}
+            onClick={() => setActiveTab('activities')}
+          >
             <History size={16} />
-            <span>Activity Trail (Phase 7)</span>
-          </div>
+            <span>Activity Trail ({activities.length})</span>
+          </button>
         </div>
 
-        <div style={{ padding: '24px', backgroundColor: 'var(--bg-surface-subtle)', borderBottomLeftRadius: 'var(--radius-lg)', borderBottomRightRadius: 'var(--radius-lg)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13.5px', color: 'var(--text-muted)' }}>
-            <Calendar size={18} color="var(--color-accent-blue)" />
-            <span>
-              Follow-up reminders, scheduled calls, overdue alerts, and date-pickers will be fully integrated into this tab during <strong>Phase 6</strong>.
-            </span>
-          </div>
+        <div style={{ padding: '20px 24px' }}>
+          {activeTab === 'followups' ? (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                <span style={{ fontSize: '13.5px', color: 'var(--text-muted)' }}>
+                  Scheduled callbacks and counselling sessions ({followUps.length})
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setIsFollowUpModalOpen(true)}
+                  style={{ padding: '5px 12px', fontSize: '12.5px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                >
+                  <Calendar size={13} />
+                  <span>+ Schedule Follow-up</span>
+                </button>
+              </div>
+
+              {followUps.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {followUps.map((item) => (
+                    <FollowUpCard
+                      key={item.id}
+                      followUp={{ ...item, lead }}
+                      onComplete={handleCompleteFollowUp}
+                      isCompleting={completingFollowUpId === item.id}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-muted)', fontSize: '13.5px' }}>
+                  <p style={{ margin: '0 0 10px 0' }}>No follow-up callbacks or visits recorded for this student yet.</p>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setIsFollowUpModalOpen(true)}
+                    style={{ fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Plus size={14} />
+                    <span>Schedule First Follow-up</span>
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <ActivityTimeline
+              activities={activities}
+              isLoading={isLoadingActivities}
+              error={activityError}
+              onRetry={reloadActivities}
+              onRefresh={reloadActivities}
+            />
+          )}
         </div>
       </div>
 
@@ -732,6 +871,16 @@ export default function LeadDetailPage() {
         userRole={userRole}
         onSave={handleSaveEdit}
         isSaving={isSavingEdit}
+      />
+
+      <ScheduleFollowUpModal
+        key={lead.id + (isFollowUpModalOpen ? '-fup-open' : '-fup-closed')}
+        isOpen={isFollowUpModalOpen}
+        onClose={() => setIsFollowUpModalOpen(false)}
+        onSuccess={handleFollowUpCreated}
+        preselectedLead={lead}
+        currentUser={profile}
+        userRole={userRole}
       />
     </div>
   )

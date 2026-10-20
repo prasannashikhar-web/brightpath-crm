@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabaseClient.js'
+import { logActivity, ACTIVITY_TYPES } from './activitiesService.js'
 
 /**
  * Normalizes phone numbers for consistent display and search.
@@ -217,6 +218,24 @@ export async function createLead(leadData, currentUser, userRole = 'counsellor')
     throw new Error(error.message || 'Failed to save lead record in database.')
   }
 
+  // Automatically record lead creation in audit trail
+  try {
+    await logActivity({
+      leadId: data.id,
+      actorId: currentUser.id,
+      activityType: ACTIVITY_TYPES.LEAD_CREATED,
+      description: `Lead registered for ${data.full_name} interested in ${data.course_interest}`,
+      metadata: {
+        full_name: data.full_name,
+        course_interest: data.course_interest,
+        source: data.source,
+        assigned_to: data.assigned_to
+      }
+    })
+  } catch (logErr) {
+    console.error('[leadsService] Failed to log lead_created activity:', logErr)
+  }
+
   return data
 }
 
@@ -319,9 +338,11 @@ export async function fetchLeadById(id) {
  * @param {string} leadId
  * @param {'New'|'Contacted'|'Qualified'|'Converted'|'Lost'} newStatus
  * @param {string|null} [lostReason=null]
+ * @param {string|null} [previousStatus=null]
+ * @param {string|null} [actorId=null]
  * @returns {Promise<any>}
  */
-export async function updateLeadStatus(leadId, newStatus, lostReason = null) {
+export async function updateLeadStatus(leadId, newStatus, lostReason = null, previousStatus = null, actorId = null) {
   if (!leadId) {
     throw new Error('Lead ID is required.')
   }
@@ -386,6 +407,34 @@ export async function updateLeadStatus(leadId, newStatus, lostReason = null) {
     throw new Error('Update affected zero rows. You may not have permission to modify this lead.')
   }
 
+  // Automatically record status transition in audit trail
+  try {
+    let description = `Status changed to ${newStatus}`
+    if (previousStatus && previousStatus !== newStatus) {
+      description = `Status changed from ${previousStatus} to ${newStatus}`
+    }
+    if (newStatus === 'Lost' && finalLostReason) {
+      description = `Marked as Lost (${finalLostReason})`
+    } else if (previousStatus === 'Lost' && newStatus === 'Contacted') {
+      description = 'Lead reopened and returned to Contacted'
+    }
+
+    await logActivity({
+      leadId,
+      actorId,
+      activityType: ACTIVITY_TYPES.STATUS_CHANGED,
+      description,
+      metadata: {
+        previous_status: previousStatus || null,
+        new_status: newStatus,
+        lost_reason: finalLostReason,
+        is_reopened: previousStatus === 'Lost' && newStatus === 'Contacted'
+      }
+    })
+  } catch (logErr) {
+    console.error('[leadsService] Failed to log status_changed activity:', logErr)
+  }
+
   return data
 }
 
@@ -395,9 +444,10 @@ export async function updateLeadStatus(leadId, newStatus, lostReason = null) {
  * @param {string} leadId
  * @param {object} updateData
  * @param {string} userRole
+ * @param {string|null} [actorId=null]
  * @returns {Promise<any>}
  */
-export async function updateLeadDetails(leadId, updateData, userRole = 'counsellor') {
+export async function updateLeadDetails(leadId, updateData, userRole = 'counsellor', actorId = null) {
   if (!leadId) {
     throw new Error('Lead ID is required.')
   }
@@ -467,6 +517,24 @@ export async function updateLeadDetails(leadId, updateData, userRole = 'counsell
 
   if (!data) {
     throw new Error('Update affected zero rows. You may not have permission to update this lead.')
+  }
+
+  // Automatically record lead updates in audit trail
+  try {
+    await logActivity({
+      leadId,
+      actorId,
+      activityType: ACTIVITY_TYPES.LEAD_UPDATED,
+      description: `Contact and academic profile updated for ${data.full_name}`,
+      metadata: {
+        course_interest: data.course_interest,
+        source: data.source,
+        has_notes: Boolean(data.notes),
+        assigned_to: data.assigned_to
+      }
+    })
+  } catch (logErr) {
+    console.error('[leadsService] Failed to log lead_updated activity:', logErr)
   }
 
   return data

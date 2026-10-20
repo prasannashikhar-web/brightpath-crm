@@ -106,27 +106,27 @@ export default function LoginPage() {
             </div>
             <div>
               <div className="auth-hero-title">BrightPath CRM</div>
-              <div className="auth-hero-subtitle">Admissions Management System</div>
+              <div className="auth-hero-subtitle">Client Management System</div>
             </div>
           </div>
 
           <div className="auth-hero-body">
             <div className="auth-hero-badge">
               <Award size={15} color="#2563eb" />
-              <span>Coaching Institute Staff Portal</span>
+              <span>Coach & Trainer Portal</span>
             </div>
             <h2 className="auth-hero-heading">
-              Streamline admissions, student callbacks, and conversion pipelines.
+              Streamline client follow-ups and conversion pipelines.
             </h2>
             <p className="auth-hero-desc">
-              Empowering counsellors and academic coordinators to nurture student enquiries from initial contact to enrolled batch.
+              Helping coaches and trainers manage client enquiries from first contact through onboarding.
             </p>
           </div>
 
           <div className="auth-hero-features">
             <div className="auth-feature-row">
               <ShieldCheck size={18} color="#16a34a" />
-              <span>Role-governed pipeline access (Admin, Manager, Counsellor)</span>
+              <span>Role-governed pipeline access (Admin, Manager, Coach/Trainer)</span>
             </div>
             <div className="auth-feature-row">
               <CheckCircle2 size={18} color="#2563eb" />
@@ -143,8 +143,8 @@ export default function LoginPage() {
             </h1>
             <p className="auth-form-subtitle">
               {tab === 'signin'
-                ? 'Sign in to access your assigned student leads and follow-up queues.'
-                : 'Register your staff account to join your institute counselling team.'}
+                ? 'Sign in to access your assigned client leads and follow-up queues.'
+                : 'Register your staff account to join your coaching team.'}
             </p>
           </div>
 
@@ -296,7 +296,7 @@ export default function LoginPage() {
                 className="auth-demo-pill"
                 onClick={() => handleFillDemo('counsellor@brightpath.edu', 'Aditi Rao')}
               >
-                Counsellor
+                Coach/Trainer
               </button>
               <button
                 type="button"
